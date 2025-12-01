@@ -70,8 +70,8 @@ const translations: Record<Language, Translations> = {
     dragDrop: 'o arrastra y suelta tu archivo aquí',
     supportsFiles: 'Soporta archivos .xlsx y .csv',
     file: 'Archivo',
-    retailSales: 'Ventas De Menudeo',
-    clubSales: 'Visita/Venta de Club',
+    retailSales: 'Ganancia De Ventas Al Menudeo',
+    clubSales: 'Ganancia De Visita/Venta Al Club',
     totalProfit: 'Ganancia Total',
     errorCsv: 'Error al analizar archivo CSV',
     errorExcel: 'Error al analizar archivo Excel',
@@ -128,13 +128,62 @@ export default function SalesAnalyzer() {
     });
   };
 
+  const getMonthFromSalesData = (dailyData: DailyProfit[]): string => {
+    if (!dailyData || dailyData.length === 0) return '';
+    
+    // Get the first date from the sorted data (format: "11/30/2025" or similar)
+    const firstDateString = dailyData[0].date;
+    if (!firstDateString) return '';
+    
+    // Parse date string (format: MM/DD/YYYY)
+    const dateParts = firstDateString.toString().split('/');
+    if (dateParts.length < 3) {
+      // Try parsing as Date object if split doesn't work
+      const date = new Date(firstDateString);
+      if (isNaN(date.getTime())) return '';
+      const monthIndex = date.getMonth();
+      const monthNames = language === 'es' 
+        ? ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+        : ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return monthNames[monthIndex];
+    }
+    
+    // Extract month from MM/DD/YYYY format (month is at index 0)
+    const monthIndex = parseInt(dateParts[0], 10) - 1; // Convert to 0-based index
+    if (isNaN(monthIndex) || monthIndex < 0 || monthIndex > 11) return '';
+    
+    // Return month name in the current language
+    const monthNames = language === 'es' 
+      ? ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+      : ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    return monthNames[monthIndex];
+  };
+
   const processFile = (file: File) => {
     setError('');
     setSalesData(null);
 
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
+    const fileType = file.type;
 
-    if (fileExtension === 'csv') {
+    // Log file details for debugging
+    console.log('File selected:', {
+      name: file.name,
+      type: fileType,
+      extension: fileExtension,
+      size: file.size
+    });
+
+    // Check both extension and MIME type for better mobile compatibility
+    const isCsv = fileExtension === 'csv' || fileType === 'text/csv';
+    const isExcel = 
+      fileExtension === 'xlsx' || 
+      fileExtension === 'xls' || 
+      fileType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      fileType === 'application/vnd.ms-excel';
+
+    if (isCsv) {
       // Parse CSV
       Papa.parse(file, {
         header: true,
@@ -145,7 +194,7 @@ export default function SalesAnalyzer() {
           setError(t.errorCsv + ': ' + err.message);
         }
       });
-    } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+    } else if (isExcel) {
       // Parse Excel
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -159,6 +208,10 @@ export default function SalesAnalyzer() {
           setError(t.errorExcel);
         }
       };
+      reader.onerror = () => {
+        console.error('FileReader error');
+        setError(t.errorExcel);
+      };
       reader.readAsBinaryString(file);
     } else {
       setError(t.errorFileType);
@@ -171,19 +224,28 @@ export default function SalesAnalyzer() {
     const dailyMap = new Map<string, { retail: number; club: number }>();
 
     data.forEach((row: Record<string, string>) => {
-      const receiptType = row['Receipt Type'];
-      const profitString = row['Profit'];
-      const dateCreated = row['Date Created'];
+      // Support both English and Spanish column names
+      const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
+      const profitString = row['Profit'] || row['Ganancia'];
+      const dateCreated = row['Date Created'] || row['Fecha de creación'];
 
       if (receiptType && profitString) {
         // Remove dollar sign and parse to float
         const profit = parseFloat(profitString.toString().replace('$', '').replace(',', ''));
 
         if (!isNaN(profit)) {
-          // Calculate totals
-          if (receiptType === 'Retail Sale') {
+          // Support both English and Spanish receipt type values
+          const typeString = receiptType.toString();
+          
+          // Check for Retail Sale (English or Spanish)
+          if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
             retailTotal += profit;
-          } else if (receiptType === 'Club Visit/Sale') {
+          } 
+          // Check for Club Visit/Sale (English or Spanish)
+          else if (
+            typeString === 'Club Visit/Sale' || 
+            typeString === 'Visita al Club / Venta'
+          ) {
             clubTotal += profit;
           }
 
@@ -194,9 +256,13 @@ export default function SalesAnalyzer() {
               dailyMap.set(dateKey, { retail: 0, club: 0 });
             }
             const dayData = dailyMap.get(dateKey)!;
-            if (receiptType === 'Retail Sale') {
+            
+            if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
               dayData.retail += profit;
-            } else if (receiptType === 'Club Visit/Sale') {
+            } else if (
+              typeString === 'Club Visit/Sale' || 
+              typeString === 'Visita al Club / Venta'
+            ) {
               dayData.club += profit;
             }
           }
@@ -227,6 +293,8 @@ export default function SalesAnalyzer() {
     if (file) {
       processFile(file);
     }
+    // Reset input value to allow re-uploading the same file
+    e.target.value = '';
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -313,7 +381,7 @@ export default function SalesAnalyzer() {
             <input
               type="file"
               className="hidden"
-              accept=".xlsx,.xls,.csv"
+              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
               onChange={handleFileInput}
             />
           </label>
@@ -383,6 +451,17 @@ export default function SalesAnalyzer() {
               <div className="p-6 sm:p-8">
                 {activeTab === 'summary' ? (
                   <>
+                    {/* Month Indicator */}
+                    <div className="mb-6 flex justify-center">
+                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-3 rounded-full border-2 border-green-300 shadow-md">
+                        <svg className="w-5 h-5 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span className="text-lg sm:text-xl font-bold text-green-800">
+                          {getMonthFromSalesData(salesData.dailyData)}
+                        </span>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                       {/* Retail Total */}
                       <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
@@ -466,6 +545,17 @@ export default function SalesAnalyzer() {
                   </>
                 ) : (
                   <>
+                    {/* Month Indicator */}
+                    <div className="mb-6 flex justify-center">
+                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-3 rounded-full border-2 border-green-300 shadow-md">
+                        <svg className="w-5 h-5 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span className="text-lg sm:text-xl font-bold text-green-800">
+                          {getMonthFromSalesData(salesData.dailyData)}
+                        </span>
+                      </div>
+                    </div>
                     {/* Daily Breakdown Chart */}
                     <div className="mb-6">
                       <h3 className="text-xl sm:text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
