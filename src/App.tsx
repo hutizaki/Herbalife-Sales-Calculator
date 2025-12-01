@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import type { ParseResult } from 'papaparse';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import herbalifeLogo from './assets/Herbalife Logo.png';
 import usaFlag from './assets/usa.png';
 import mexicoFlag from './assets/mexico.png';
@@ -10,6 +11,14 @@ interface SalesData {
   retailTotal: number;
   clubTotal: number;
   fileName: string;
+  dailyData: DailyProfit[];
+}
+
+interface DailyProfit {
+  date: string;
+  retail: number;
+  club: number;
+  total: number;
 }
 
 type Language = 'en' | 'es';
@@ -29,6 +38,9 @@ interface Translations {
   errorFileType: string;
   copied: string;
   copy: string;
+  summary: string;
+  dailyBreakdown: string;
+  dailyProfitChart: string;
 }
 
 const translations: Record<Language, Translations> = {
@@ -46,7 +58,10 @@ const translations: Record<Language, Translations> = {
     errorExcel: 'Error parsing Excel file',
     errorFileType: 'Please upload a .xlsx or .csv file',
     copied: 'Copied!',
-    copy: 'Copy'
+    copy: 'Copy',
+    summary: 'Summary',
+    dailyBreakdown: 'Daily Breakdown',
+    dailyProfitChart: 'Daily Profit Trends'
   },
   es: {
     title: 'Analizador de Ventas',
@@ -55,14 +70,17 @@ const translations: Record<Language, Translations> = {
     dragDrop: 'o arrastra y suelta tu archivo aquí',
     supportsFiles: 'Soporta archivos .xlsx y .csv',
     file: 'Archivo',
-    retailSales: 'Ventas Minoristas',
+    retailSales: 'Ventas De Menudeo',
     clubSales: 'Visita/Venta de Club',
     totalProfit: 'Ganancia Total',
     errorCsv: 'Error al analizar archivo CSV',
     errorExcel: 'Error al analizar archivo Excel',
     errorFileType: 'Por favor sube un archivo .xlsx o .csv',
     copied: '¡Copiado!',
-    copy: 'Copiar'
+    copy: 'Copiar',
+    summary: 'Resumen',
+    dailyBreakdown: 'Desglose Diario',
+    dailyProfitChart: 'Tendencias de Ganancia Diaria'
   }
 };
 
@@ -72,6 +90,12 @@ export default function SalesAnalyzer() {
   const [isDragging, setIsDragging] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'summary' | 'daily'>('summary');
+  const [lineOpacity, setLineOpacity] = useState({
+    retail: 0.2,
+    club: 0.2,
+    total: 1.0
+  });
 
   const t = translations[language];
 
@@ -88,6 +112,13 @@ export default function SalesAnalyzer() {
     const newLanguage = language === 'en' ? 'es' : 'en';
     setLanguage(newLanguage);
     localStorage.setItem('preferredLanguage', newLanguage);
+  };
+
+  const toggleLine = (line: 'retail' | 'club' | 'total') => {
+    setLineOpacity(prev => ({
+      ...prev,
+      [line]: prev[line] === 1.0 ? 0.2 : 1.0
+    }));
   };
 
   const copyToClipboard = (value: string, field: string) => {
@@ -137,29 +168,57 @@ export default function SalesAnalyzer() {
   const calculateTotals = (data: Record<string, string>[], fileName: string) => {
     let retailTotal = 0;
     let clubTotal = 0;
+    const dailyMap = new Map<string, { retail: number; club: number }>();
 
     data.forEach((row: Record<string, string>) => {
       const receiptType = row['Receipt Type'];
       const profitString = row['Profit'];
+      const dateCreated = row['Date Created'];
 
       if (receiptType && profitString) {
         // Remove dollar sign and parse to float
         const profit = parseFloat(profitString.toString().replace('$', '').replace(',', ''));
 
         if (!isNaN(profit)) {
+          // Calculate totals
           if (receiptType === 'Retail Sale') {
             retailTotal += profit;
           } else if (receiptType === 'Club Visit/Sale') {
             clubTotal += profit;
           }
+
+          // Group by date for daily breakdown
+          if (dateCreated) {
+            const dateKey = dateCreated.toString();
+            if (!dailyMap.has(dateKey)) {
+              dailyMap.set(dateKey, { retail: 0, club: 0 });
+            }
+            const dayData = dailyMap.get(dateKey)!;
+            if (receiptType === 'Retail Sale') {
+              dayData.retail += profit;
+            } else if (receiptType === 'Club Visit/Sale') {
+              dayData.club += profit;
+            }
+          }
         }
       }
     });
 
+    // Convert daily map to array and sort by date
+    const dailyData: DailyProfit[] = Array.from(dailyMap.entries())
+      .map(([date, values]) => ({
+        date,
+        retail: values.retail,
+        club: values.club,
+        total: values.retail + values.club
+      }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
     setSalesData({
       retailTotal,
       clubTotal,
-      fileName
+      fileName,
+      dailyData
     });
   };
 
@@ -277,93 +336,279 @@ export default function SalesAnalyzer() {
         {/* Results */}
         {salesData && (
           <div className="mt-8 space-y-4 animate-fadeIn">
-            <div className="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 border-2 border-green-200">
-              <div className="flex items-center gap-2 mb-6 pb-4 border-b-2 border-green-100">
+            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border-2 border-green-200">
+              {/* File Info Header */}
+              <div className="flex items-center gap-2 px-6 sm:px-8 py-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b-2 border-green-100">
                 <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <p className="text-sm sm:text-base text-gray-600 font-medium truncate">{t.file}: {salesData.fileName}</p>
               </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                {/* Retail Total */}
-                <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
-                  <div className="flex justify-between items-start mb-3">
-                    <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
-                    <button
-                      onClick={() => copyToClipboard(salesData.retailTotal.toFixed(2), 'retail')}
-                      className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
-                      title={t.copy}
-                    >
-                      {copiedField === 'retail' ? (
-                        <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-3xl sm:text-4xl font-bold text-green-700">
-                    ${salesData.retailTotal.toFixed(2)}
-                  </p>
-                </div>
 
-                {/* Club Total */}
-                <div className="bg-gradient-to-br from-teal-50 to-cyan-100 rounded-2xl p-5 sm:p-6 border-2 border-teal-300 shadow-lg hover:shadow-xl transition-shadow">
-                  <div className="flex justify-between items-start mb-3">
-                    <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
-                    <button
-                      onClick={() => copyToClipboard(salesData.clubTotal.toFixed(2), 'club')}
-                      className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
-                      title={t.copy}
-                    >
-                      {copiedField === 'club' ? (
-                        <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                    </button>
+              {/* Tab Navigation */}
+              <div className="flex border-b-2 border-green-100">
+                <button
+                  onClick={() => setActiveTab('summary')}
+                  className={`flex-1 py-4 px-6 font-semibold text-sm sm:text-base transition-all ${
+                    activeTab === 'summary'
+                      ? 'bg-white text-green-700 border-b-4 border-green-600'
+                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <span>{t.summary}</span>
                   </div>
-                  <p className="text-3xl sm:text-4xl font-bold text-teal-700">
-                    ${salesData.clubTotal.toFixed(2)}
-                  </p>
-                </div>
+                </button>
+                <button
+                  onClick={() => setActiveTab('daily')}
+                  className={`flex-1 py-4 px-6 font-semibold text-sm sm:text-base transition-all ${
+                    activeTab === 'daily'
+                      ? 'bg-white text-green-700 border-b-4 border-green-600'
+                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                    </svg>
+                    <span>{t.dailyBreakdown}</span>
+                  </div>
+                </button>
               </div>
 
-              {/* Grand Total */}
-              <div className="mt-6 pt-6 border-t-2 border-green-200">
-                <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-5 sm:p-6 shadow-xl">
-                  <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
-                    <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
-                    <div className="flex items-center gap-3">
-                      <p className="text-3xl sm:text-4xl font-bold text-white">
-                        ${(salesData.retailTotal + salesData.clubTotal).toFixed(2)}
-                      </p>
-                      <button
-                        onClick={() => copyToClipboard((salesData.retailTotal + salesData.clubTotal).toFixed(2), 'total')}
-                        className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
-                        title={t.copy}
-                      >
-                        {copiedField === 'total' ? (
-                          <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        )}
-                      </button>
+              {/* Tab Content */}
+              <div className="p-6 sm:p-8">
+                {activeTab === 'summary' ? (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                      {/* Retail Total */}
+                      <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
+                        <div className="flex justify-between items-start mb-3">
+                          <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
+                          <button
+                            onClick={() => copyToClipboard(salesData.retailTotal.toFixed(2), 'retail')}
+                            className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
+                            title={t.copy}
+                          >
+                            {copiedField === 'retail' ? (
+                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-3xl sm:text-4xl font-bold text-green-700">
+                          ${salesData.retailTotal.toFixed(2)}
+                        </p>
+                      </div>
+
+                      {/* Club Total */}
+                      <div className="bg-gradient-to-br from-teal-50 to-cyan-100 rounded-2xl p-5 sm:p-6 border-2 border-teal-300 shadow-lg hover:shadow-xl transition-shadow">
+                        <div className="flex justify-between items-start mb-3">
+                          <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
+                          <button
+                            onClick={() => copyToClipboard(salesData.clubTotal.toFixed(2), 'club')}
+                            className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
+                            title={t.copy}
+                          >
+                            {copiedField === 'club' ? (
+                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-3xl sm:text-4xl font-bold text-teal-700">
+                          ${salesData.clubTotal.toFixed(2)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </div>
+
+                    {/* Grand Total */}
+                    <div className="mt-6">
+                      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-5 sm:p-6 shadow-xl">
+                        <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+                          <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
+                          <div className="flex items-center gap-3">
+                            <p className="text-3xl sm:text-4xl font-bold text-white">
+                              ${(salesData.retailTotal + salesData.clubTotal).toFixed(2)}
+                            </p>
+                            <button
+                              onClick={() => copyToClipboard((salesData.retailTotal + salesData.clubTotal).toFixed(2), 'total')}
+                              className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
+                              title={t.copy}
+                            >
+                              {copiedField === 'total' ? (
+                                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              ) : (
+                                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Daily Breakdown Chart */}
+                    <div className="mb-6">
+                      <h3 className="text-xl sm:text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        {t.dailyProfitChart}
+                      </h3>
+                      <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-4 sm:p-6 border-2 border-green-200">
+                        <ResponsiveContainer width="100%" height={300}>
+                          <LineChart data={salesData.dailyData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#d1fae5" />
+                            <XAxis 
+                              dataKey="date" 
+                              tick={{ fill: '#047857', fontSize: 12 }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis 
+                              tick={{ fill: '#047857', fontSize: 12 }}
+                              tickFormatter={(value) => `$${value}`}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: '#ffffff', 
+                                border: '2px solid #10b981',
+                                borderRadius: '12px',
+                                padding: '12px'
+                              }}
+                              formatter={(value: any) => `$${value.toFixed(2)}`}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="retail" 
+                              stroke="#059669" 
+                              strokeWidth={3}
+                              strokeOpacity={lineOpacity.retail}
+                              name={t.retailSales}
+                              dot={{ fill: '#059669', r: 4, fillOpacity: lineOpacity.retail }}
+                              activeDot={{ r: 6 }}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="club" 
+                              stroke="#0891b2" 
+                              strokeWidth={3}
+                              strokeOpacity={lineOpacity.club}
+                              name={t.clubSales}
+                              dot={{ fill: '#0891b2', r: 4, fillOpacity: lineOpacity.club }}
+                              activeDot={{ r: 6 }}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="total" 
+                              stroke="#047857" 
+                              strokeWidth={4}
+                              strokeOpacity={lineOpacity.total}
+                              name={t.totalProfit}
+                              dot={{ fill: '#047857', r: 5, fillOpacity: lineOpacity.total }}
+                              activeDot={{ r: 7 }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                        
+                        {/* Custom Legend Buttons */}
+                        <div className="flex flex-wrap justify-center gap-3 mt-6 pt-6 border-t-2 border-green-200">
+                          <button
+                            onClick={() => toggleLine('retail')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.retail === 1.0
+                                ? 'bg-green-600 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1 rounded-full ${lineOpacity.retail === 1.0 ? 'bg-white' : 'bg-green-600'}`}
+                              style={{ opacity: lineOpacity.retail }}
+                            ></div>
+                            <span>{t.retailSales}</span>
+                          </button>
+                          
+                          <button
+                            onClick={() => toggleLine('club')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.club === 1.0
+                                ? 'bg-cyan-600 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1 rounded-full ${lineOpacity.club === 1.0 ? 'bg-white' : 'bg-cyan-600'}`}
+                              style={{ opacity: lineOpacity.club }}
+                            ></div>
+                            <span>{t.clubSales}</span>
+                          </button>
+                          
+                          <button
+                            onClick={() => toggleLine('total')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.total === 1.0
+                                ? 'bg-green-800 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1.5 rounded-full ${lineOpacity.total === 1.0 ? 'bg-white' : 'bg-green-800'}`}
+                              style={{ opacity: lineOpacity.total }}
+                            ></div>
+                            <span>{t.totalProfit}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Daily Data Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="border-b-2 border-green-200">
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">Date</th>
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.retailSales}</th>
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.clubSales}</th>
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.totalProfit}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {salesData.dailyData.map((day, index) => (
+                            <tr 
+                              key={index} 
+                              className="border-b border-green-100 hover:bg-green-50 transition-colors"
+                            >
+                              <td className="py-3 px-4 text-gray-700 font-medium text-sm sm:text-base">{day.date}</td>
+                              <td className="py-3 px-4 text-green-700 font-semibold text-sm sm:text-base">${day.retail.toFixed(2)}</td>
+                              <td className="py-3 px-4 text-teal-700 font-semibold text-sm sm:text-base">${day.club.toFixed(2)}</td>
+                              <td className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">${day.total.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
