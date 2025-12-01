@@ -91,6 +91,8 @@ export default function SalesAnalyzer() {
   const [language, setLanguage] = useState<Language>('en');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'summary' | 'daily'>('summary');
+  const [selectedMonth, setSelectedMonth] = useState<string | 'ALL'>('ALL');
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [lineOpacity, setLineOpacity] = useState({
     retail: 0.2,
     club: 0.2,
@@ -128,18 +130,14 @@ export default function SalesAnalyzer() {
     });
   };
 
-  const getMonthFromSalesData = (dailyData: DailyProfit[]): string => {
-    if (!dailyData || dailyData.length === 0) return '';
-    
-    // Get the first date from the sorted data (format: "11/30/2025" or similar)
-    const firstDateString = dailyData[0].date;
-    if (!firstDateString) return '';
+  const getMonthFromDate = (dateString: string): string => {
+    if (!dateString) return '';
     
     // Parse date string (format: MM/DD/YYYY)
-    const dateParts = firstDateString.toString().split('/');
+    const dateParts = dateString.toString().split('/');
     if (dateParts.length < 3) {
       // Try parsing as Date object if split doesn't work
-      const date = new Date(firstDateString);
+      const date = new Date(dateString);
       if (isNaN(date.getTime())) return '';
       const monthIndex = date.getMonth();
       const monthNames = language === 'es' 
@@ -160,9 +158,51 @@ export default function SalesAnalyzer() {
     return monthNames[monthIndex];
   };
 
+  const getAllUniqueMonths = (dailyData: DailyProfit[]): string[] => {
+    if (!dailyData || dailyData.length === 0) return [];
+    
+    const monthSet = new Set<string>();
+    dailyData.forEach(day => {
+      const month = getMonthFromDate(day.date);
+      if (month) {
+        monthSet.add(month);
+      }
+    });
+    
+    // Sort months chronologically (most recent first) by finding the latest date for each month
+    const sortedMonths = Array.from(monthSet).sort((a, b) => {
+      // Find the latest date for each month
+      const datesA = dailyData.filter(d => getMonthFromDate(d.date) === a).map(d => new Date(d.date));
+      const datesB = dailyData.filter(d => getMonthFromDate(d.date) === b).map(d => new Date(d.date));
+      
+      const latestA = datesA.length > 0 ? Math.max(...datesA.map(d => d.getTime())) : 0;
+      const latestB = datesB.length > 0 ? Math.max(...datesB.map(d => d.getTime())) : 0;
+      
+      // Most recent month first
+      return latestB - latestA;
+    });
+    
+    return sortedMonths;
+  };
+
+  const getFilteredDailyData = (dailyData: DailyProfit[], month: string | 'ALL'): DailyProfit[] => {
+    if (month === 'ALL') return dailyData;
+    return dailyData.filter(day => getMonthFromDate(day.date) === month);
+  };
+
+  const getFilteredTotals = (dailyData: DailyProfit[], month: string | 'ALL'): { retailTotal: number; clubTotal: number } => {
+    const filtered = getFilteredDailyData(dailyData, month);
+    return {
+      retailTotal: filtered.reduce((sum, day) => sum + day.retail, 0),
+      clubTotal: filtered.reduce((sum, day) => sum + day.club, 0)
+    };
+  };
+
   const processFile = (file: File) => {
     setError('');
     setSalesData(null);
+    setSelectedMonth('ALL');
+    setAvailableMonths([]);
 
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
     const fileType = file.type;
@@ -279,6 +319,19 @@ export default function SalesAnalyzer() {
         total: values.retail + values.club
       }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // Extract all unique months and set default to most recent
+    const months = getAllUniqueMonths(dailyData);
+    setAvailableMonths(months);
+    
+    // Set default to most recent month (first in sorted array) or 'ALL' if multiple months
+    if (months.length > 1) {
+      setSelectedMonth(months[0]); // Most recent month
+    } else if (months.length === 1) {
+      setSelectedMonth(months[0]); // Single month (can't be turned off)
+    } else {
+      setSelectedMonth('ALL');
+    }
 
     setSalesData({
       retailTotal,
@@ -451,110 +504,177 @@ export default function SalesAnalyzer() {
               <div className="p-6 sm:p-8">
                 {activeTab === 'summary' ? (
                   <>
-                    {/* Month Indicator */}
-                    <div className="mb-6 flex justify-center">
-                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-3 rounded-full border-2 border-green-300 shadow-md">
-                        <svg className="w-5 h-5 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                        <span className="text-lg sm:text-xl font-bold text-green-800">
-                          {getMonthFromSalesData(salesData.dailyData)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                      {/* Retail Total */}
-                      <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
-                        <div className="flex justify-between items-start mb-3">
-                          <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
+                    {/* Month Selector */}
+                    <div className="mb-6 flex flex-wrap justify-center gap-2">
+                      {availableMonths.length > 1 && (
+                        <button
+                          onClick={() => setSelectedMonth('ALL')}
+                          className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 shadow-md transition-all ${
+                            selectedMonth === 'ALL'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white border-green-700 shadow-lg'
+                              : 'bg-white text-green-700 border-green-300 hover:bg-green-50'
+                          }`}
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <span className="text-sm sm:text-base font-semibold">ALL</span>
+                        </button>
+                      )}
+                      {availableMonths.map((month) => {
+                        const isActive = selectedMonth === month;
+                        const isSingleMonth = availableMonths.length === 1;
+                        return (
                           <button
-                            onClick={() => copyToClipboard(salesData.retailTotal.toFixed(2), 'retail')}
-                            className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
-                            title={t.copy}
+                            key={month}
+                            onClick={() => !isSingleMonth && setSelectedMonth(month)}
+                            disabled={isSingleMonth}
+                            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 shadow-md transition-all ${
+                              isActive
+                                ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white border-green-700 shadow-lg'
+                                : isSingleMonth
+                                ? 'bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 border-green-300 cursor-default'
+                                : 'bg-white text-green-700 border-green-300 hover:bg-green-50'
+                            }`}
                           >
-                            {copiedField === 'retail' ? (
-                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                              </svg>
-                            )}
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span className="text-sm sm:text-base font-semibold">{month}</span>
                           </button>
-                        </div>
-                        <p className="text-3xl sm:text-4xl font-bold text-green-700">
-                          ${salesData.retailTotal.toFixed(2)}
-                        </p>
-                      </div>
-
-                      {/* Club Total */}
-                      <div className="bg-gradient-to-br from-teal-50 to-cyan-100 rounded-2xl p-5 sm:p-6 border-2 border-teal-300 shadow-lg hover:shadow-xl transition-shadow">
-                        <div className="flex justify-between items-start mb-3">
-                          <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
-                          <button
-                            onClick={() => copyToClipboard(salesData.clubTotal.toFixed(2), 'club')}
-                            className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
-                            title={t.copy}
-                          >
-                            {copiedField === 'club' ? (
-                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                        <p className="text-3xl sm:text-4xl font-bold text-teal-700">
-                          ${salesData.clubTotal.toFixed(2)}
-                        </p>
-                      </div>
+                        );
+                      })}
                     </div>
+                    {(() => {
+                      const filteredTotals = getFilteredTotals(salesData.dailyData, selectedMonth);
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                            {/* Retail Total */}
+                            <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
+                              <div className="flex justify-between items-start mb-3">
+                                <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
+                                <button
+                                  onClick={() => copyToClipboard(filteredTotals.retailTotal.toFixed(2), 'retail')}
+                                  className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
+                                  title={t.copy}
+                                >
+                                  {copiedField === 'retail' ? (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                              <p className="text-3xl sm:text-4xl font-bold text-green-700">
+                                ${filteredTotals.retailTotal.toFixed(2)}
+                              </p>
+                            </div>
 
-                    {/* Grand Total */}
-                    <div className="mt-6">
-                      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-5 sm:p-6 shadow-xl">
-                        <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
-                          <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
-                          <div className="flex items-center gap-3">
-                            <p className="text-3xl sm:text-4xl font-bold text-white">
-                              ${(salesData.retailTotal + salesData.clubTotal).toFixed(2)}
-                            </p>
-                            <button
-                              onClick={() => copyToClipboard((salesData.retailTotal + salesData.clubTotal).toFixed(2), 'total')}
-                              className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
-                              title={t.copy}
-                            >
-                              {copiedField === 'total' ? (
-                                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              ) : (
-                                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                </svg>
-                              )}
-                            </button>
+                            {/* Club Total */}
+                            <div className="bg-gradient-to-br from-teal-50 to-cyan-100 rounded-2xl p-5 sm:p-6 border-2 border-teal-300 shadow-lg hover:shadow-xl transition-shadow">
+                              <div className="flex justify-between items-start mb-3">
+                                <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
+                                <button
+                                  onClick={() => copyToClipboard(filteredTotals.clubTotal.toFixed(2), 'club')}
+                                  className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
+                                  title={t.copy}
+                                >
+                                  {copiedField === 'club' ? (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                              <p className="text-3xl sm:text-4xl font-bold text-teal-700">
+                                ${filteredTotals.clubTotal.toFixed(2)}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    </div>
+
+                          {/* Grand Total */}
+                          <div className="mt-6">
+                            <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-5 sm:p-6 shadow-xl">
+                              <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+                                <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
+                                <div className="flex items-center gap-3">
+                                  <p className="text-3xl sm:text-4xl font-bold text-white">
+                                    ${(filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2)}
+                                  </p>
+                                  <button
+                                    onClick={() => copyToClipboard((filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2), 'total')}
+                                    className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
+                                    title={t.copy}
+                                  >
+                                    {copiedField === 'total' ? (
+                                      <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 ) : (
                   <>
-                    {/* Month Indicator */}
-                    <div className="mb-6 flex justify-center">
-                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-3 rounded-full border-2 border-green-300 shadow-md">
-                        <svg className="w-5 h-5 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                        <span className="text-lg sm:text-xl font-bold text-green-800">
-                          {getMonthFromSalesData(salesData.dailyData)}
-                        </span>
-                      </div>
+                    {/* Month Selector */}
+                    <div className="mb-6 flex flex-wrap justify-center gap-2">
+                      {availableMonths.length > 1 && (
+                        <button
+                          onClick={() => setSelectedMonth('ALL')}
+                          className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 shadow-md transition-all ${
+                            selectedMonth === 'ALL'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white border-green-700 shadow-lg'
+                              : 'bg-white text-green-700 border-green-300 hover:bg-green-50'
+                          }`}
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <span className="text-sm sm:text-base font-semibold">ALL</span>
+                        </button>
+                      )}
+                      {availableMonths.map((month) => {
+                        const isActive = selectedMonth === month;
+                        const isSingleMonth = availableMonths.length === 1;
+                        return (
+                          <button
+                            key={month}
+                            onClick={() => !isSingleMonth && setSelectedMonth(month)}
+                            disabled={isSingleMonth}
+                            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 shadow-md transition-all ${
+                              isActive
+                                ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white border-green-700 shadow-lg'
+                                : isSingleMonth
+                                ? 'bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 border-green-300 cursor-default'
+                                : 'bg-white text-green-700 border-green-300 hover:bg-green-50'
+                            }`}
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span className="text-sm sm:text-base font-semibold">{month}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                     {/* Daily Breakdown Chart */}
                     <div className="mb-6">
@@ -566,7 +686,7 @@ export default function SalesAnalyzer() {
                       </h3>
                       <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-4 sm:p-6 border-2 border-green-200">
                         <ResponsiveContainer width="100%" height={300}>
-                          <LineChart data={salesData.dailyData}>
+                          <LineChart data={getFilteredDailyData(salesData.dailyData, selectedMonth)}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#d1fae5" />
                             <XAxis 
                               dataKey="date" 
@@ -683,7 +803,7 @@ export default function SalesAnalyzer() {
                           </tr>
                         </thead>
                         <tbody>
-                          {salesData.dailyData.map((day, index) => (
+                          {getFilteredDailyData(salesData.dailyData, selectedMonth).map((day, index) => (
                             <tr 
                               key={index} 
                               className="border-b border-green-100 hover:bg-green-50 transition-colors"
