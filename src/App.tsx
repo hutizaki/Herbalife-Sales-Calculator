@@ -8,6 +8,8 @@ import usaFlag from './assets/usa.png';
 import mexicoFlag from './assets/mexico.png';
 
 interface SalesData {
+  retailProfit: number;
+  clubProfit: number;
   retailTotal: number;
   clubTotal: number;
   fileName: string;
@@ -19,6 +21,8 @@ interface DailyProfit {
   retail: number;
   club: number;
   total: number;
+  retailReceiptTotal: number;
+  clubReceiptTotal: number;
 }
 
 type Language = 'en' | 'es';
@@ -32,6 +36,8 @@ interface Translations {
   file: string;
   retailSales: string;
   clubSales: string;
+  retailTotal: string;
+  clubTotal: string;
   totalProfit: string;
   errorCsv: string;
   errorExcel: string;
@@ -53,6 +59,8 @@ const translations: Record<Language, Translations> = {
     file: 'File',
     retailSales: 'Retail Sales',
     clubSales: 'Club Visit/Sale',
+    retailTotal: 'Retail Total',
+    clubTotal: 'Club Total',
     totalProfit: 'Total Profit',
     errorCsv: 'Error parsing CSV file',
     errorExcel: 'Error parsing Excel file',
@@ -72,6 +80,8 @@ const translations: Record<Language, Translations> = {
     file: 'Archivo',
     retailSales: 'Ganancia De Ventas Al Menudeo',
     clubSales: 'Ganancia De Visita/Venta Al Club',
+    retailTotal: 'Total De Ventas Al Menudeo',
+    clubTotal: 'Total De Visita/Venta Al Club',
     totalProfit: 'Ganancia Total',
     errorCsv: 'Error al analizar archivo CSV',
     errorExcel: 'Error al analizar archivo Excel',
@@ -93,6 +103,7 @@ export default function SalesAnalyzer() {
   const [activeTab, setActiveTab] = useState<'summary' | 'daily'>('summary');
   const [selectedMonth, setSelectedMonth] = useState<string | 'ALL'>('ALL');
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [currentWeekIndex, setCurrentWeekIndex] = useState<number>(0);
   const [lineOpacity, setLineOpacity] = useState({
     retail: 0.2,
     club: 0.2,
@@ -115,6 +126,11 @@ export default function SalesAnalyzer() {
     setLanguage(newLanguage);
     localStorage.setItem('preferredLanguage', newLanguage);
   };
+
+  // Reset week index when month changes
+  useEffect(() => {
+    setCurrentWeekIndex(0);
+  }, [selectedMonth]);
 
   const toggleLine = (line: 'retail' | 'club' | 'total') => {
     setLineOpacity(prev => ({
@@ -190,12 +206,72 @@ export default function SalesAnalyzer() {
     return dailyData.filter(day => getMonthFromDate(day.date) === month);
   };
 
-  const getFilteredTotals = (dailyData: DailyProfit[], month: string | 'ALL'): { retailTotal: number; clubTotal: number } => {
+  const getFilteredTotals = (dailyData: DailyProfit[], month: string | 'ALL'): { retailProfit: number; clubProfit: number; retailTotal: number; clubTotal: number } => {
     const filtered = getFilteredDailyData(dailyData, month);
     return {
-      retailTotal: filtered.reduce((sum, day) => sum + day.retail, 0),
-      clubTotal: filtered.reduce((sum, day) => sum + day.club, 0)
+      retailProfit: filtered.reduce((sum, day) => sum + day.retail, 0),
+      clubProfit: filtered.reduce((sum, day) => sum + day.club, 0),
+      retailTotal: filtered.reduce((sum, day) => sum + day.retailReceiptTotal, 0),
+      clubTotal: filtered.reduce((sum, day) => sum + day.clubReceiptTotal, 0)
     };
+  };
+
+  const splitDataIntoWeeks = (dailyData: DailyProfit[]): DailyProfit[][] => {
+    if (!dailyData || dailyData.length === 0) return [];
+    
+    const weeks: DailyProfit[][] = [];
+    let currentWeek: DailyProfit[] = [];
+    const firstDate = new Date(dailyData[0].date);
+    let weekStartTime = firstDate.getTime();
+    const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+    
+    dailyData.forEach((day) => {
+      const dayDate = new Date(day.date);
+      const dayTime = dayDate.getTime();
+      
+      // If this day is within the current 7-day period (starting from weekStartTime)
+      if (dayTime >= weekStartTime && dayTime < weekStartTime + sevenDaysInMs) {
+        currentWeek.push(day);
+      } else {
+        // Start a new week
+        if (currentWeek.length > 0) {
+          weeks.push(currentWeek);
+        }
+        // Set new week start to this day's date
+        weekStartTime = dayTime;
+        currentWeek = [day];
+      }
+    });
+    
+    // Add the last week if it has data
+    if (currentWeek.length > 0) {
+      weeks.push(currentWeek);
+    }
+    
+    return weeks;
+  };
+
+  const getWeekDataForMobile = (dailyData: DailyProfit[], month: string | 'ALL'): DailyProfit[] => {
+    const filtered = getFilteredDailyData(dailyData, month);
+    const weeks = splitDataIntoWeeks(filtered);
+    
+    if (weeks.length === 0) return [];
+    
+    // Ensure currentWeekIndex is within bounds (clamp without setting state)
+    const validIndex = Math.max(0, Math.min(currentWeekIndex, weeks.length - 1));
+    
+    return weeks[validIndex] || weeks[0] || [];
+  };
+
+  const goToPreviousWeek = () => {
+    setCurrentWeekIndex(prev => Math.max(0, prev - 1));
+  };
+
+  const goToNextWeek = () => {
+    if (!salesData) return;
+    const filtered = getFilteredDailyData(salesData.dailyData, selectedMonth);
+    const weeks = splitDataIntoWeeks(filtered);
+    setCurrentWeekIndex(prev => Math.min(weeks.length - 1, prev + 1));
   };
 
   const processFile = (file: File) => {
@@ -259,19 +335,23 @@ export default function SalesAnalyzer() {
   };
 
   const calculateTotals = (data: Record<string, string>[], fileName: string) => {
+    let retailProfit = 0;
+    let clubProfit = 0;
     let retailTotal = 0;
     let clubTotal = 0;
-    const dailyMap = new Map<string, { retail: number; club: number }>();
+    const dailyMap = new Map<string, { retail: number; club: number; retailReceiptTotal: number; clubReceiptTotal: number }>();
 
     data.forEach((row: Record<string, string>) => {
       // Support both English and Spanish column names
       const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
       const profitString = row['Profit'] || row['Ganancia'];
+      const receiptTotalString = row['Receipt Total'] || row['Total del Recibo'];
       const dateCreated = row['Date Created'] || row['Fecha de creación'];
 
       if (receiptType && profitString) {
         // Remove dollar sign and parse to float
         const profit = parseFloat(profitString.toString().replace('$', '').replace(',', ''));
+        const receiptTotal = receiptTotalString ? parseFloat(receiptTotalString.toString().replace('$', '').replace(',', '')) : 0;
 
         if (!isNaN(profit)) {
           // Support both English and Spanish receipt type values
@@ -279,31 +359,43 @@ export default function SalesAnalyzer() {
           
           // Check for Retail Sale (English or Spanish)
           if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
-            retailTotal += profit;
+            retailProfit += profit;
+            if (!isNaN(receiptTotal)) {
+              retailTotal += receiptTotal;
+            }
           } 
           // Check for Club Visit/Sale (English or Spanish)
           else if (
             typeString === 'Club Visit/Sale' || 
             typeString === 'Visita al Club / Venta'
           ) {
-            clubTotal += profit;
+            clubProfit += profit;
+            if (!isNaN(receiptTotal)) {
+              clubTotal += receiptTotal;
+            }
           }
 
           // Group by date for daily breakdown
           if (dateCreated) {
             const dateKey = dateCreated.toString();
             if (!dailyMap.has(dateKey)) {
-              dailyMap.set(dateKey, { retail: 0, club: 0 });
+              dailyMap.set(dateKey, { retail: 0, club: 0, retailReceiptTotal: 0, clubReceiptTotal: 0 });
             }
             const dayData = dailyMap.get(dateKey)!;
             
             if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
               dayData.retail += profit;
+              if (!isNaN(receiptTotal)) {
+                dayData.retailReceiptTotal += receiptTotal;
+              }
             } else if (
               typeString === 'Club Visit/Sale' || 
               typeString === 'Visita al Club / Venta'
             ) {
               dayData.club += profit;
+              if (!isNaN(receiptTotal)) {
+                dayData.clubReceiptTotal += receiptTotal;
+              }
             }
           }
         }
@@ -316,7 +408,9 @@ export default function SalesAnalyzer() {
         date,
         retail: values.retail,
         club: values.club,
-        total: values.retail + values.club
+        total: values.retail + values.club,
+        retailReceiptTotal: values.retailReceiptTotal,
+        clubReceiptTotal: values.clubReceiptTotal
       }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -334,6 +428,8 @@ export default function SalesAnalyzer() {
     }
 
     setSalesData({
+      retailProfit,
+      clubProfit,
       retailTotal,
       clubTotal,
       fileName,
@@ -391,7 +487,7 @@ export default function SalesAnalyzer() {
           {/* Language Toggle Button */}
           <button
             onClick={toggleLanguage}
-            className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-5 rounded-full shadow-lg hover:shadow-xl transition-all border-2 border-green-200"
+            className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-gray-700 font-semibold py-2.5 px-5 rounded-full shadow-lg hover:shadow-xl transition-all border-2 border-green-200"
           >
             <span className="text-xl">
               {language === 'en' ? <img src={mexicoFlag} alt="Mexico Flag" className="w-5 h-5" /> : <img src={usaFlag} alt="USA Flag" className="w-5 h-5" />}
@@ -549,13 +645,13 @@ export default function SalesAnalyzer() {
                       const filteredTotals = getFilteredTotals(salesData.dailyData, selectedMonth);
                       return (
                         <>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                            {/* Retail Total */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                            {/* Retail Profit */}
                             <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
                               <div className="flex justify-between items-start mb-3">
                                 <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
                                 <button
-                                  onClick={() => copyToClipboard(filteredTotals.retailTotal.toFixed(2), 'retail')}
+                                  onClick={() => copyToClipboard(filteredTotals.retailProfit.toFixed(2), 'retail')}
                                   className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
                                   title={t.copy}
                                 >
@@ -571,16 +667,16 @@ export default function SalesAnalyzer() {
                                 </button>
                               </div>
                               <p className="text-3xl sm:text-4xl font-bold text-green-700">
-                                ${filteredTotals.retailTotal.toFixed(2)}
+                                ${filteredTotals.retailProfit.toFixed(2)}
                               </p>
                             </div>
 
-                            {/* Club Total */}
+                            {/* Club Profit */}
                             <div className="bg-gradient-to-br from-teal-50 to-cyan-100 rounded-2xl p-5 sm:p-6 border-2 border-teal-300 shadow-lg hover:shadow-xl transition-shadow">
                               <div className="flex justify-between items-start mb-3">
                                 <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
                                 <button
-                                  onClick={() => copyToClipboard(filteredTotals.clubTotal.toFixed(2), 'club')}
+                                  onClick={() => copyToClipboard(filteredTotals.clubProfit.toFixed(2), 'club')}
                                   className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
                                   title={t.copy}
                                 >
@@ -596,6 +692,56 @@ export default function SalesAnalyzer() {
                                 </button>
                               </div>
                               <p className="text-3xl sm:text-4xl font-bold text-teal-700">
+                                ${filteredTotals.clubProfit.toFixed(2)}
+                              </p>
+                            </div>
+
+                            {/* Retail Total */}
+                            <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-2xl p-5 sm:p-6 border-2 border-blue-300 shadow-lg hover:shadow-xl transition-shadow">
+                              <div className="flex justify-between items-start mb-3">
+                                <p className="text-xs sm:text-sm font-bold text-blue-800 uppercase tracking-wide">{t.retailTotal}</p>
+                                <button
+                                  onClick={() => copyToClipboard(filteredTotals.retailTotal.toFixed(2), 'retailTotal')}
+                                  className="p-1.5 sm:p-2 hover:bg-blue-200 rounded-lg transition-colors group relative"
+                                  title={t.copy}
+                                >
+                                  {copiedField === 'retailTotal' ? (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                              <p className="text-3xl sm:text-4xl font-bold text-blue-700">
+                                ${filteredTotals.retailTotal.toFixed(2)}
+                              </p>
+                            </div>
+
+                            {/* Club Total */}
+                            <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-2xl p-5 sm:p-6 border-2 border-purple-300 shadow-lg hover:shadow-xl transition-shadow">
+                              <div className="flex justify-between items-start mb-3">
+                                <p className="text-xs sm:text-sm font-bold text-purple-800 uppercase tracking-wide">{t.clubTotal}</p>
+                                <button
+                                  onClick={() => copyToClipboard(filteredTotals.clubTotal.toFixed(2), 'clubTotal')}
+                                  className="p-1.5 sm:p-2 hover:bg-purple-200 rounded-lg transition-colors group relative"
+                                  title={t.copy}
+                                >
+                                  {copiedField === 'clubTotal' ? (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                              <p className="text-3xl sm:text-4xl font-bold text-purple-700">
                                 ${filteredTotals.clubTotal.toFixed(2)}
                               </p>
                             </div>
@@ -608,10 +754,10 @@ export default function SalesAnalyzer() {
                                 <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
                                 <div className="flex items-center gap-3">
                                   <p className="text-3xl sm:text-4xl font-bold text-white">
-                                    ${(filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2)}
+                                    ${(filteredTotals.retailProfit + filteredTotals.clubProfit).toFixed(2)}
                                   </p>
                                   <button
-                                    onClick={() => copyToClipboard((filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2), 'total')}
+                                    onClick={() => copyToClipboard((filteredTotals.retailProfit + filteredTotals.clubProfit).toFixed(2), 'total')}
                                     className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
                                     title={t.copy}
                                   >
@@ -684,7 +830,175 @@ export default function SalesAnalyzer() {
                         </svg>
                         {t.dailyProfitChart}
                       </h3>
+                      
+                      {/* Mobile Week Navigation */}
+                      {(() => {
+                        const filtered = getFilteredDailyData(salesData.dailyData, selectedMonth);
+                        const weeks = splitDataIntoWeeks(filtered);
+                        const canGoPrevious = currentWeekIndex > 0;
+                        const canGoNext = currentWeekIndex < weeks.length - 1;
+                        const currentWeek = weeks[currentWeekIndex] || [];
+                        const weekStartDate = currentWeek.length > 0 ? new Date(currentWeek[0].date) : null;
+                        const weekEndDate = currentWeek.length > 0 ? new Date(currentWeek[currentWeek.length - 1].date) : null;
+                        
+                        return (
+                          <div className="block sm:hidden mb-4">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <button
+                                onClick={goToPreviousWeek}
+                                disabled={!canGoPrevious}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-full border-2 transition-all ${
+                                  canGoPrevious
+                                    ? 'bg-white text-green-700 border-green-300 hover:bg-green-50 shadow-md'
+                                    : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                }`}
+                              >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                                </svg>
+                                <span className="text-sm font-semibold">Previous</span>
+                              </button>
+                              
+                              <div className="flex-1 text-center px-2">
+                                <p className="text-sm font-semibold text-green-800">
+                                  {weekStartDate && weekEndDate
+                                    ? `${weekStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                                    : 'Week View'}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  Week {currentWeekIndex + 1} of {weeks.length}
+                                </p>
+                              </div>
+                              
+                              <button
+                                onClick={goToNextWeek}
+                                disabled={!canGoNext}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-full border-2 transition-all ${
+                                  canGoNext
+                                    ? 'bg-white text-green-700 border-green-300 hover:bg-green-50 shadow-md'
+                                    : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                }`}
+                              >
+                                <span className="text-sm font-semibold">Next</span>
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      
                       <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-4 sm:p-6 border-2 border-green-200">
+                        {/* Mobile: Week View */}
+                        <div className="block sm:hidden">
+                          <ResponsiveContainer width="100%" height={300}>
+                            <LineChart data={getWeekDataForMobile(salesData.dailyData, selectedMonth)}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#d1fae5" />
+                            <XAxis 
+                              dataKey="date" 
+                              tick={{ fill: '#047857', fontSize: 12 }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis 
+                              tick={{ fill: '#047857', fontSize: 12 }}
+                              tickFormatter={(value) => `$${value}`}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: '#ffffff', 
+                                border: '2px solid #10b981',
+                                borderRadius: '12px',
+                                padding: '12px'
+                              }}
+                              formatter={(value: any) => `$${value.toFixed(2)}`}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="retail" 
+                              stroke="#059669" 
+                              strokeWidth={3}
+                              strokeOpacity={lineOpacity.retail}
+                              name={t.retailSales}
+                              dot={{ fill: '#059669', r: 4, fillOpacity: lineOpacity.retail }}
+                              activeDot={{ r: 6 }}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="club" 
+                              stroke="#0891b2" 
+                              strokeWidth={3}
+                              strokeOpacity={lineOpacity.club}
+                              name={t.clubSales}
+                              dot={{ fill: '#0891b2', r: 4, fillOpacity: lineOpacity.club }}
+                              activeDot={{ r: 6 }}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="total" 
+                              stroke="#047857" 
+                              strokeWidth={4}
+                              strokeOpacity={lineOpacity.total}
+                              name={t.totalProfit}
+                              dot={{ fill: '#047857', r: 5, fillOpacity: lineOpacity.total }}
+                              activeDot={{ r: 7 }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                        
+                        {/* Custom Legend Buttons */}
+                        <div className="flex flex-wrap justify-center gap-3 mt-6 pt-6 border-t-2 border-green-200">
+                          <button
+                            onClick={() => toggleLine('retail')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.retail === 1.0
+                                ? 'bg-green-600 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1 rounded-full ${lineOpacity.retail === 1.0 ? 'bg-white' : 'bg-green-600'}`}
+                              style={{ opacity: lineOpacity.retail }}
+                            ></div>
+                            <span>{t.retailSales}</span>
+                          </button>
+                          
+                          <button
+                            onClick={() => toggleLine('club')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.club === 1.0
+                                ? 'bg-cyan-600 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1 rounded-full ${lineOpacity.club === 1.0 ? 'bg-white' : 'bg-cyan-600'}`}
+                              style={{ opacity: lineOpacity.club }}
+                            ></div>
+                            <span>{t.clubSales}</span>
+                          </button>
+                          
+                          <button
+                            onClick={() => toggleLine('total')}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
+                              lineOpacity.total === 1.0
+                                ? 'bg-green-800 text-white'
+                                : 'bg-white text-gray-500 border-2 border-gray-300'
+                            }`}
+                          >
+                            <div 
+                              className={`w-8 h-1.5 rounded-full ${lineOpacity.total === 1.0 ? 'bg-white' : 'bg-green-800'}`}
+                              style={{ opacity: lineOpacity.total }}
+                            ></div>
+                            <span>{t.totalProfit}</span>
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Desktop: Full Month View */}
+                      <div className="hidden sm:block">
                         <ResponsiveContainer width="100%" height={300}>
                           <LineChart data={getFilteredDailyData(salesData.dailyData, selectedMonth)}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#d1fae5" />
@@ -789,6 +1103,7 @@ export default function SalesAnalyzer() {
                           </button>
                         </div>
                       </div>
+                    </div>
                     </div>
 
                     {/* Daily Data Table */}
