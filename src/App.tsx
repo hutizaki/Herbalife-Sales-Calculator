@@ -338,25 +338,23 @@ export default function SalesAnalyzer() {
         }
       }
 
-      if (receiptType && profitString && totalString) {
+      // Always read both Profit and Receipt Total columns
+      if (profitString && totalString && receiptSource) {
         // Remove dollar sign and parse to float
         const profit = parseFloat(profitString.toString().replace('$', '').replace(',', ''));
         const total = parseFloat(totalString.toString().replace('$', '').replace(',', ''));
 
         if (!isNaN(profit) && !isNaN(total)) {
-          // Support both English and Spanish receipt type values
-          const typeString = receiptType.toString();
+          // Categorize by Receipt Source (POS vs MYHL)
+          const sourceString = receiptSource.toString().trim().toUpperCase();
           
-          // Check for Retail Sale (English or Spanish) - now Wholesale
-          if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
+          // POS → Wholesale (indoor/point of sale)
+          if (sourceString === 'POS') {
             wholesaleProfit += profit;
             wholesaleTotal += total;
           } 
-          // Check for Club Visit/Sale (English or Spanish)
-          else if (
-            typeString === 'Club Visit/Sale' || 
-            typeString === 'Visita al Club / Venta'
-          ) {
+          // MYHL → Club/Retail
+          else if (sourceString === 'MYHL') {
             clubProfit += profit;
             clubTotal += total;
           }
@@ -374,13 +372,13 @@ export default function SalesAnalyzer() {
             }
             const dayData = dailyMap.get(dateKey)!;
             
-            if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
+            // POS → Wholesale
+            if (sourceString === 'POS') {
               dayData.wholesaleProfit += profit;
               dayData.wholesaleTotal += total;
-            } else if (
-              typeString === 'Club Visit/Sale' || 
-              typeString === 'Visita al Club / Venta'
-            ) {
+            } 
+            // MYHL → Club/Retail
+            else if (sourceString === 'MYHL') {
               dayData.clubProfit += profit;
               dayData.clubTotal += total;
             }
