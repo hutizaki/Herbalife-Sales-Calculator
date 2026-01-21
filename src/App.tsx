@@ -268,11 +268,14 @@ export default function SalesAnalyzer() {
       const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
       const profitString = row['Profit'] || row['Ganancia'];
       const dateCreated = row['Date Created'] || row['Fecha de creación'];
+      const receiptSource = row['Fuente del recibo']; // Same in English or Spanish
       const customerName = row['Customer Name'] || row['Nombre del Cliente'];
 
-      // Skip if customer is Ashley Regis
-      if (customerName && customerName.toString().trim().toLowerCase() === 'ashley regis') {
-        return; // Skip this row
+      // Skip if customer is Ashley Regis AND receipt source is POS
+      if (receiptSource && receiptSource.toString().trim().toUpperCase() === 'POS') {
+        if (customerName && customerName.toString().trim().toLowerCase() === 'ashley regis') {
+          return; // Skip this row
+        }
       }
 
       if (receiptType && profitString) {
