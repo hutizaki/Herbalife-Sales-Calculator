@@ -268,6 +268,12 @@ export default function SalesAnalyzer() {
       const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
       const profitString = row['Profit'] || row['Ganancia'];
       const dateCreated = row['Date Created'] || row['Fecha de creación'];
+      const customerName = row['Customer Name'] || row['Nombre del Cliente'];
+
+      // Skip if customer is Ashley Regis
+      if (customerName && customerName.toString().trim().toLowerCase() === 'ashley regis') {
+        return; // Skip this row
+      }
 
       if (receiptType && profitString) {
         // Remove dollar sign and parse to float
