@@ -8,17 +8,22 @@ import usaFlag from './assets/usa.png';
 import mexicoFlag from './assets/mexico.png';
 
 interface SalesData {
-  retailTotal: number;
+  wholesaleProfit: number;
+  clubProfit: number;
+  wholesaleTotal: number;
   clubTotal: number;
   fileName: string;
-  dailyData: DailyProfit[];
+  dailyData: DailyData[];
 }
 
-interface DailyProfit {
+interface DailyData {
   date: string;
-  retail: number;
-  club: number;
-  total: number;
+  wholesaleProfit: number;
+  clubProfit: number;
+  wholesaleTotal: number;
+  clubTotal: number;
+  totalProfit: number;
+  totalAmount: number;
 }
 
 type Language = 'en' | 'es';
@@ -30,9 +35,10 @@ interface Translations {
   dragDrop: string;
   supportsFiles: string;
   file: string;
-  retailSales: string;
+  wholesaleSales: string;
   clubSales: string;
   totalProfit: string;
+  totalAmount: string;
   errorCsv: string;
   errorExcel: string;
   errorFileType: string;
@@ -41,6 +47,8 @@ interface Translations {
   summary: string;
   dailyBreakdown: string;
   dailyProfitChart: string;
+  viewProfit: string;
+  viewTotal: string;
 }
 
 const translations: Record<Language, Translations> = {
@@ -51,9 +59,10 @@ const translations: Record<Language, Translations> = {
     dragDrop: 'or drag and drop your file here',
     supportsFiles: 'Supports .xlsx and .csv files',
     file: 'File',
-    retailSales: 'Retail Sales',
+    wholesaleSales: 'Wholesale Sales',
     clubSales: 'Club Visit/Sale',
     totalProfit: 'Total Profit',
+    totalAmount: 'Total Amount',
     errorCsv: 'Error parsing CSV file',
     errorExcel: 'Error parsing Excel file',
     errorFileType: 'Please upload a .xlsx or .csv file',
@@ -61,7 +70,9 @@ const translations: Record<Language, Translations> = {
     copy: 'Copy',
     summary: 'Summary',
     dailyBreakdown: 'Daily Breakdown',
-    dailyProfitChart: 'Daily Profit Trends'
+    dailyProfitChart: 'Daily Trends',
+    viewProfit: 'Profit',
+    viewTotal: 'Total'
   },
   es: {
     title: 'Analizador de Ventas',
@@ -70,9 +81,10 @@ const translations: Record<Language, Translations> = {
     dragDrop: 'o arrastra y suelta tu archivo aquí',
     supportsFiles: 'Soporta archivos .xlsx y .csv',
     file: 'Archivo',
-    retailSales: 'Ganancia De Ventas Al Menudeo',
+    wholesaleSales: 'Ganancia De Ventas Al Menudeo',
     clubSales: 'Ganancia De Visita/Venta Al Club',
     totalProfit: 'Ganancia Total',
+    totalAmount: 'Total',
     errorCsv: 'Error al analizar archivo CSV',
     errorExcel: 'Error al analizar archivo Excel',
     errorFileType: 'Por favor sube un archivo .xlsx o .csv',
@@ -80,7 +92,9 @@ const translations: Record<Language, Translations> = {
     copy: 'Copiar',
     summary: 'Resumen',
     dailyBreakdown: 'Desglose Diario',
-    dailyProfitChart: 'Tendencias de Ganancia Diaria'
+    dailyProfitChart: 'Tendencias Diarias',
+    viewProfit: 'Ganancia',
+    viewTotal: 'Total'
   }
 };
 
@@ -93,8 +107,9 @@ export default function SalesAnalyzer() {
   const [activeTab, setActiveTab] = useState<'summary' | 'daily'>('summary');
   const [selectedMonth, setSelectedMonth] = useState<string | 'ALL'>('ALL');
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<'profit' | 'total'>('profit');
   const [lineOpacity, setLineOpacity] = useState({
-    retail: 0.2,
+    wholesale: 0.2,
     club: 0.2,
     total: 1.0
   });
@@ -116,7 +131,7 @@ export default function SalesAnalyzer() {
     localStorage.setItem('preferredLanguage', newLanguage);
   };
 
-  const toggleLine = (line: 'retail' | 'club' | 'total') => {
+  const toggleLine = (line: 'wholesale' | 'club' | 'total') => {
     setLineOpacity(prev => ({
       ...prev,
       [line]: prev[line] === 1.0 ? 0.2 : 1.0
@@ -158,7 +173,7 @@ export default function SalesAnalyzer() {
     return monthNames[monthIndex];
   };
 
-  const getAllUniqueMonths = (dailyData: DailyProfit[]): string[] => {
+  const getAllUniqueMonths = (dailyData: DailyData[]): string[] => {
     if (!dailyData || dailyData.length === 0) return [];
     
     const monthSet = new Set<string>();
@@ -185,17 +200,24 @@ export default function SalesAnalyzer() {
     return sortedMonths;
   };
 
-  const getFilteredDailyData = (dailyData: DailyProfit[], month: string | 'ALL'): DailyProfit[] => {
+  const getFilteredDailyData = (dailyData: DailyData[], month: string | 'ALL'): DailyData[] => {
     if (month === 'ALL') return dailyData;
     return dailyData.filter(day => getMonthFromDate(day.date) === month);
   };
 
-  const getFilteredTotals = (dailyData: DailyProfit[], month: string | 'ALL'): { retailTotal: number; clubTotal: number } => {
+  const getFilteredTotals = (dailyData: DailyData[], month: string | 'ALL', mode: 'profit' | 'total') => {
     const filtered = getFilteredDailyData(dailyData, month);
-    return {
-      retailTotal: filtered.reduce((sum, day) => sum + day.retail, 0),
-      clubTotal: filtered.reduce((sum, day) => sum + day.club, 0)
-    };
+    if (mode === 'profit') {
+      return {
+        wholesale: filtered.reduce((sum, day) => sum + day.wholesaleProfit, 0),
+        club: filtered.reduce((sum, day) => sum + day.clubProfit, 0)
+      };
+    } else {
+      return {
+        wholesale: filtered.reduce((sum, day) => sum + day.wholesaleTotal, 0),
+        club: filtered.reduce((sum, day) => sum + day.clubTotal, 0)
+      };
+    }
   };
 
   const processFile = (file: File) => {
@@ -259,16 +281,24 @@ export default function SalesAnalyzer() {
   };
 
   const calculateTotals = (data: Record<string, string>[], fileName: string) => {
-    let retailTotal = 0;
+    let wholesaleProfit = 0;
+    let clubProfit = 0;
+    let wholesaleTotal = 0;
     let clubTotal = 0;
-    const dailyMap = new Map<string, { retail: number; club: number }>();
+    const dailyMap = new Map<string, { 
+      wholesaleProfit: number; 
+      clubProfit: number;
+      wholesaleTotal: number;
+      clubTotal: number;
+    }>();
 
     data.forEach((row: Record<string, string>) => {
       // Support both English and Spanish column names
       const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
       const profitString = row['Profit'] || row['Ganancia'];
+      const totalString = row['Receipt Total'] || row['Total del recibo'];
       const dateCreated = row['Date Created'] || row['Fecha de creación'];
-      const receiptSource = row['Fuente del recibo']; // Same in English or Spanish
+      const receiptSource = row['Receipt Source'] || row['Fuente del recibo'];
       const customerName = row['Customer Name'] || row['Nombre del Cliente'];
 
       // Skip if customer is Ashley Regis AND receipt source is POS
@@ -278,41 +308,51 @@ export default function SalesAnalyzer() {
         }
       }
 
-      if (receiptType && profitString) {
+      if (receiptType && profitString && totalString) {
         // Remove dollar sign and parse to float
         const profit = parseFloat(profitString.toString().replace('$', '').replace(',', ''));
+        const total = parseFloat(totalString.toString().replace('$', '').replace(',', ''));
 
-        if (!isNaN(profit)) {
+        if (!isNaN(profit) && !isNaN(total)) {
           // Support both English and Spanish receipt type values
           const typeString = receiptType.toString();
           
-          // Check for Retail Sale (English or Spanish)
+          // Check for Retail Sale (English or Spanish) - now Wholesale
           if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
-            retailTotal += profit;
+            wholesaleProfit += profit;
+            wholesaleTotal += total;
           } 
           // Check for Club Visit/Sale (English or Spanish)
           else if (
             typeString === 'Club Visit/Sale' || 
             typeString === 'Visita al Club / Venta'
           ) {
-            clubTotal += profit;
+            clubProfit += profit;
+            clubTotal += total;
           }
 
           // Group by date for daily breakdown
           if (dateCreated) {
             const dateKey = dateCreated.toString();
             if (!dailyMap.has(dateKey)) {
-              dailyMap.set(dateKey, { retail: 0, club: 0 });
+              dailyMap.set(dateKey, { 
+                wholesaleProfit: 0, 
+                clubProfit: 0,
+                wholesaleTotal: 0,
+                clubTotal: 0
+              });
             }
             const dayData = dailyMap.get(dateKey)!;
             
             if (typeString === 'Retail Sale' || typeString === 'Venta al menudeo') {
-              dayData.retail += profit;
+              dayData.wholesaleProfit += profit;
+              dayData.wholesaleTotal += total;
             } else if (
               typeString === 'Club Visit/Sale' || 
               typeString === 'Visita al Club / Venta'
             ) {
-              dayData.club += profit;
+              dayData.clubProfit += profit;
+              dayData.clubTotal += total;
             }
           }
         }
@@ -320,12 +360,15 @@ export default function SalesAnalyzer() {
     });
 
     // Convert daily map to array and sort by date
-    const dailyData: DailyProfit[] = Array.from(dailyMap.entries())
+    const dailyData: DailyData[] = Array.from(dailyMap.entries())
       .map(([date, values]) => ({
         date,
-        retail: values.retail,
-        club: values.club,
-        total: values.retail + values.club
+        wholesaleProfit: values.wholesaleProfit,
+        clubProfit: values.clubProfit,
+        wholesaleTotal: values.wholesaleTotal,
+        clubTotal: values.clubTotal,
+        totalProfit: values.wholesaleProfit + values.clubProfit,
+        totalAmount: values.wholesaleTotal + values.clubTotal
       }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -343,7 +386,9 @@ export default function SalesAnalyzer() {
     }
 
     setSalesData({
-      retailTotal,
+      wholesaleProfit,
+      clubProfit,
+      wholesaleTotal,
       clubTotal,
       fileName,
       dailyData
@@ -513,6 +558,32 @@ export default function SalesAnalyzer() {
               <div className="p-6 sm:p-8">
                 {activeTab === 'summary' ? (
                   <>
+                    {/* Profit/Total Toggle */}
+                    <div className="mb-6 flex justify-center">
+                      <div className="inline-flex items-center bg-gradient-to-r from-green-50 to-emerald-50 rounded-full p-1 border-2 border-green-300 shadow-lg">
+                        <button
+                          onClick={() => setViewMode('profit')}
+                          className={`px-6 py-2.5 rounded-full font-semibold text-sm sm:text-base transition-all ${
+                            viewMode === 'profit'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
+                              : 'text-green-700 hover:text-green-800'
+                          }`}
+                        >
+                          💰 {t.viewProfit}
+                        </button>
+                        <button
+                          onClick={() => setViewMode('total')}
+                          className={`px-6 py-2.5 rounded-full font-semibold text-sm sm:text-base transition-all ${
+                            viewMode === 'total'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
+                              : 'text-green-700 hover:text-green-800'
+                          }`}
+                        >
+                          💵 {t.viewTotal}
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Month Selector */}
                     <div className="mb-6 flex flex-wrap justify-center gap-2">
                       {availableMonths.length > 1 && (
@@ -555,20 +626,20 @@ export default function SalesAnalyzer() {
                       })}
                     </div>
                     {(() => {
-                      const filteredTotals = getFilteredTotals(salesData.dailyData, selectedMonth);
+                      const filteredTotals = getFilteredTotals(salesData.dailyData, selectedMonth, viewMode);
                       return (
                         <>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                            {/* Retail Total */}
+                            {/* Wholesale Total */}
                             <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-5 sm:p-6 border-2 border-green-300 shadow-lg hover:shadow-xl transition-shadow">
                               <div className="flex justify-between items-start mb-3">
-                                <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.retailSales}</p>
+                                <p className="text-xs sm:text-sm font-bold text-green-800 uppercase tracking-wide">{t.wholesaleSales}</p>
                                 <button
-                                  onClick={() => copyToClipboard(filteredTotals.retailTotal.toFixed(2), 'retail')}
+                                  onClick={() => copyToClipboard(filteredTotals.wholesale.toFixed(2), 'wholesale')}
                                   className="p-1.5 sm:p-2 hover:bg-green-200 rounded-lg transition-colors group relative"
                                   title={t.copy}
                                 >
-                                  {copiedField === 'retail' ? (
+                                  {copiedField === 'wholesale' ? (
                                     <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                     </svg>
@@ -580,7 +651,7 @@ export default function SalesAnalyzer() {
                                 </button>
                               </div>
                               <p className="text-3xl sm:text-4xl font-bold text-green-700">
-                                ${filteredTotals.retailTotal.toFixed(2)}
+                                ${filteredTotals.wholesale.toFixed(2)}
                               </p>
                             </div>
 
@@ -589,7 +660,7 @@ export default function SalesAnalyzer() {
                               <div className="flex justify-between items-start mb-3">
                                 <p className="text-xs sm:text-sm font-bold text-teal-800 uppercase tracking-wide">{t.clubSales}</p>
                                 <button
-                                  onClick={() => copyToClipboard(filteredTotals.clubTotal.toFixed(2), 'club')}
+                                  onClick={() => copyToClipboard(filteredTotals.club.toFixed(2), 'club')}
                                   className="p-1.5 sm:p-2 hover:bg-teal-200 rounded-lg transition-colors group relative"
                                   title={t.copy}
                                 >
@@ -605,7 +676,7 @@ export default function SalesAnalyzer() {
                                 </button>
                               </div>
                               <p className="text-3xl sm:text-4xl font-bold text-teal-700">
-                                ${filteredTotals.clubTotal.toFixed(2)}
+                                ${filteredTotals.club.toFixed(2)}
                               </p>
                             </div>
                           </div>
@@ -614,13 +685,15 @@ export default function SalesAnalyzer() {
                           <div className="mt-6">
                             <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-5 sm:p-6 shadow-xl">
                               <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
-                                <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">{t.totalProfit}</p>
+                                <p className="text-lg sm:text-xl font-bold text-white uppercase tracking-wide">
+                                  {viewMode === 'profit' ? t.totalProfit : t.totalAmount}
+                                </p>
                                 <div className="flex items-center gap-3">
                                   <p className="text-3xl sm:text-4xl font-bold text-white">
-                                    ${(filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2)}
+                                    ${(filteredTotals.wholesale + filteredTotals.club).toFixed(2)}
                                   </p>
                                   <button
-                                    onClick={() => copyToClipboard((filteredTotals.retailTotal + filteredTotals.clubTotal).toFixed(2), 'total')}
+                                    onClick={() => copyToClipboard((filteredTotals.wholesale + filteredTotals.club).toFixed(2), 'total')}
                                     className="p-2 sm:p-2.5 hover:bg-green-700 rounded-lg transition-colors"
                                     title={t.copy}
                                   >
@@ -644,6 +717,32 @@ export default function SalesAnalyzer() {
                   </>
                 ) : (
                   <>
+                    {/* Profit/Total Toggle */}
+                    <div className="mb-6 flex justify-center">
+                      <div className="inline-flex items-center bg-gradient-to-r from-green-50 to-emerald-50 rounded-full p-1 border-2 border-green-300 shadow-lg">
+                        <button
+                          onClick={() => setViewMode('profit')}
+                          className={`px-6 py-2.5 rounded-full font-semibold text-sm sm:text-base transition-all ${
+                            viewMode === 'profit'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
+                              : 'text-green-700 hover:text-green-800'
+                          }`}
+                        >
+                          💰 {t.viewProfit}
+                        </button>
+                        <button
+                          onClick={() => setViewMode('total')}
+                          className={`px-6 py-2.5 rounded-full font-semibold text-sm sm:text-base transition-all ${
+                            viewMode === 'total'
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
+                              : 'text-green-700 hover:text-green-800'
+                          }`}
+                        >
+                          💵 {t.viewTotal}
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Month Selector */}
                     <div className="mb-6 flex flex-wrap justify-center gap-2">
                       {availableMonths.length > 1 && (
@@ -719,17 +818,17 @@ export default function SalesAnalyzer() {
                             />
                             <Line 
                               type="monotone" 
-                              dataKey="retail" 
+                              dataKey={viewMode === 'profit' ? 'wholesaleProfit' : 'wholesaleTotal'}
                               stroke="#059669" 
                               strokeWidth={3}
-                              strokeOpacity={lineOpacity.retail}
-                              name={t.retailSales}
-                              dot={{ fill: '#059669', r: 4, fillOpacity: lineOpacity.retail }}
+                              strokeOpacity={lineOpacity.wholesale}
+                              name={t.wholesaleSales}
+                              dot={{ fill: '#059669', r: 4, fillOpacity: lineOpacity.wholesale }}
                               activeDot={{ r: 6 }}
                             />
                             <Line 
                               type="monotone" 
-                              dataKey="club" 
+                              dataKey={viewMode === 'profit' ? 'clubProfit' : 'clubTotal'}
                               stroke="#0891b2" 
                               strokeWidth={3}
                               strokeOpacity={lineOpacity.club}
@@ -739,11 +838,11 @@ export default function SalesAnalyzer() {
                             />
                             <Line 
                               type="monotone" 
-                              dataKey="total" 
+                              dataKey={viewMode === 'profit' ? 'totalProfit' : 'totalAmount'}
                               stroke="#047857" 
                               strokeWidth={4}
                               strokeOpacity={lineOpacity.total}
-                              name={t.totalProfit}
+                              name={viewMode === 'profit' ? t.totalProfit : t.totalAmount}
                               dot={{ fill: '#047857', r: 5, fillOpacity: lineOpacity.total }}
                               activeDot={{ r: 7 }}
                             />
@@ -753,18 +852,18 @@ export default function SalesAnalyzer() {
                         {/* Custom Legend Buttons */}
                         <div className="flex flex-wrap justify-center gap-3 mt-6 pt-6 border-t-2 border-green-200">
                           <button
-                            onClick={() => toggleLine('retail')}
+                            onClick={() => toggleLine('wholesale')}
                             className={`flex items-center gap-2 px-4 py-2.5 rounded-full font-semibold text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 ${
-                              lineOpacity.retail === 1.0
+                              lineOpacity.wholesale === 1.0
                                 ? 'bg-green-600 text-white'
                                 : 'bg-white text-gray-500 border-2 border-gray-300'
                             }`}
                           >
                             <div 
-                              className={`w-8 h-1 rounded-full ${lineOpacity.retail === 1.0 ? 'bg-white' : 'bg-green-600'}`}
-                              style={{ opacity: lineOpacity.retail }}
+                              className={`w-8 h-1 rounded-full ${lineOpacity.wholesale === 1.0 ? 'bg-white' : 'bg-green-600'}`}
+                              style={{ opacity: lineOpacity.wholesale }}
                             ></div>
-                            <span>{t.retailSales}</span>
+                            <span>{t.wholesaleSales}</span>
                           </button>
                           
                           <button
@@ -794,7 +893,7 @@ export default function SalesAnalyzer() {
                               className={`w-8 h-1.5 rounded-full ${lineOpacity.total === 1.0 ? 'bg-white' : 'bg-green-800'}`}
                               style={{ opacity: lineOpacity.total }}
                             ></div>
-                            <span>{t.totalProfit}</span>
+                            <span>{viewMode === 'profit' ? t.totalProfit : t.totalAmount}</span>
                           </button>
                         </div>
                       </div>
@@ -806,23 +905,28 @@ export default function SalesAnalyzer() {
                         <thead>
                           <tr className="border-b-2 border-green-200">
                             <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">Date</th>
-                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.retailSales}</th>
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.wholesaleSales}</th>
                             <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.clubSales}</th>
-                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{t.totalProfit}</th>
+                            <th className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">{viewMode === 'profit' ? t.totalProfit : t.totalAmount}</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {getFilteredDailyData(salesData.dailyData, selectedMonth).map((day, index) => (
-                            <tr 
-                              key={index} 
-                              className="border-b border-green-100 hover:bg-green-50 transition-colors"
-                            >
-                              <td className="py-3 px-4 text-gray-700 font-medium text-sm sm:text-base">{day.date}</td>
-                              <td className="py-3 px-4 text-green-700 font-semibold text-sm sm:text-base">${day.retail.toFixed(2)}</td>
-                              <td className="py-3 px-4 text-teal-700 font-semibold text-sm sm:text-base">${day.club.toFixed(2)}</td>
-                              <td className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">${day.total.toFixed(2)}</td>
-                            </tr>
-                          ))}
+                          {getFilteredDailyData(salesData.dailyData, selectedMonth).map((day, index) => {
+                            const wholesale = viewMode === 'profit' ? day.wholesaleProfit : day.wholesaleTotal;
+                            const club = viewMode === 'profit' ? day.clubProfit : day.clubTotal;
+                            const total = viewMode === 'profit' ? day.totalProfit : day.totalAmount;
+                            return (
+                              <tr 
+                                key={index} 
+                                className="border-b border-green-100 hover:bg-green-50 transition-colors"
+                              >
+                                <td className="py-3 px-4 text-gray-700 font-medium text-sm sm:text-base">{day.date}</td>
+                                <td className="py-3 px-4 text-green-700 font-semibold text-sm sm:text-base">${wholesale.toFixed(2)}</td>
+                                <td className="py-3 px-4 text-teal-700 font-semibold text-sm sm:text-base">${club.toFixed(2)}</td>
+                                <td className="py-3 px-4 text-green-800 font-bold text-sm sm:text-base">${total.toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
