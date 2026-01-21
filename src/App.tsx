@@ -281,6 +281,36 @@ export default function SalesAnalyzer() {
   };
 
   const calculateTotals = (data: Record<string, string>[], fileName: string) => {
+    // ============================================
+    // EXCEL COLUMN NAME MAPPING - SOURCE OF TRUTH
+    // ============================================
+    const COLUMNS = {
+      RECEIPT_TYPE: {
+        EN: 'Receipt Type',
+        ES: 'Tipo de Recibo'
+      },
+      PROFIT: {
+        EN: 'Profit',
+        ES: 'Ganancia'
+      },
+      RECEIPT_TOTAL: {
+        EN: 'Receipt Total',
+        ES: 'Total del recibo'
+      },
+      DATE_CREATED: {
+        EN: 'Date Created',
+        ES: 'Fecha de creación'
+      },
+      RECEIPT_SOURCE: {
+        EN: 'Receipt Source',
+        ES: 'Fuente del recibo'
+      },
+      CUSTOMER_NAME: {
+        EN: 'Customer Name',
+        ES: 'Nombre del Cliente'
+      }
+    };
+
     let wholesaleProfit = 0;
     let clubProfit = 0;
     let wholesaleTotal = 0;
@@ -293,13 +323,13 @@ export default function SalesAnalyzer() {
     }>();
 
     data.forEach((row: Record<string, string>) => {
-      // Support both English and Spanish column names
-      const receiptType = row['Receipt Type'] || row['Tipo de Recibo'];
-      const profitString = row['Profit'] || row['Ganancia'];
-      const totalString = row['Receipt Total'] || row['Total del recibo'];
-      const dateCreated = row['Date Created'] || row['Fecha de creación'];
-      const receiptSource = row['Receipt Source'] || row['Fuente del recibo'];
-      const customerName = row['Customer Name'] || row['Nombre del Cliente'];
+      // Read columns using mapping
+      const receiptType = row[COLUMNS.RECEIPT_TYPE.EN] || row[COLUMNS.RECEIPT_TYPE.ES];
+      const profitString = row[COLUMNS.PROFIT.EN] || row[COLUMNS.PROFIT.ES];
+      const totalString = row[COLUMNS.RECEIPT_TOTAL.EN] || row[COLUMNS.RECEIPT_TOTAL.ES];
+      const dateCreated = row[COLUMNS.DATE_CREATED.EN] || row[COLUMNS.DATE_CREATED.ES];
+      const receiptSource = row[COLUMNS.RECEIPT_SOURCE.EN] || row[COLUMNS.RECEIPT_SOURCE.ES];
+      const customerName = row[COLUMNS.CUSTOMER_NAME.EN] || row[COLUMNS.CUSTOMER_NAME.ES];
 
       // Skip if customer is Ashley Regis AND receipt source is POS
       if (receiptSource && receiptSource.toString().trim().toUpperCase() === 'POS') {
